@@ -1,6 +1,7 @@
 let uploadedFile = null;
 let validFormats = [];
 let selectedFormat = null;
+let convertedBlob = null;
 
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
@@ -14,6 +15,12 @@ const convertBtn = document.getElementById('convertBtn');
 const resultSection = document.getElementById('resultSection');
 const downloadBtn = document.getElementById('downloadBtn');
 const errorMessage = document.getElementById('errorMessage');
+
+const CONVERSION_MAP = {
+    "image": ["png", "jpg", "jpeg", "webp", "bmp"],
+    "audio": [],
+    "video": []
+};
 
 dropZone.addEventListener('click', () => fileInput.click());
 
@@ -41,39 +48,40 @@ fileInput.addEventListener('change', (e) => {
     }
 });
 
-async function handleFile(file) {
+function detectFileType(file) {
+    const type = file.type.split('/')[0];
+    if (type === 'image') return 'image';
+    if (type === 'audio') return 'audio';
+    if (type === 'video') return 'video';
+    return null;
+}
+
+function handleFile(file) {
     uploadedFile = file;
     hideError();
 
-    const formData = new FormData();
-    formData.append('file', file);
+    const detectedType = detectFileType(file);
 
-    try {
-        const response = await fetch('/api/detect', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            showError(error.detail);
-            return;
-        }
-
-        const data = await response.json();
-        validFormats = data.valid_formats;
-
-        fileName.textContent = file.name;
-        fileType.textContent = data.file_type;
-
-        dropZone.style.display = 'none';
-        fileInfo.style.display = 'flex';
-        conversionSection.style.display = 'block';
-
-        renderFormatOptions();
-    } catch (error) {
-        showError('Failed to process file. Please try again.');
+    if (!detectedType) {
+        showError('Unsupported file type');
+        return;
     }
+
+    if (detectedType === 'audio' || detectedType === 'video') {
+        showError('Audio and video conversion require server-side processing. Only image conversion is supported in browser.');
+        return;
+    }
+
+    validFormats = CONVERSION_MAP[detectedType];
+
+    fileName.textContent = file.name;
+    fileType.textContent = detectedType;
+
+    dropZone.style.display = 'none';
+    fileInfo.style.display = 'flex';
+    conversionSection.style.display = 'block';
+
+    renderFormatOptions();
 }
 
 function renderFormatOptions() {
@@ -137,43 +145,84 @@ convertBtn.addEventListener('click', async () => {
     convertBtn.textContent = 'Converting...';
     hideError();
 
-    const formData = new FormData();
-    formData.append('file', uploadedFile);
-    formData.append('target_format', selectedFormat);
-
     try {
-        const response = await fetch('/api/convert', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            showError(error.detail);
-            convertBtn.disabled = false;
-            convertBtn.textContent = 'Convert';
-            return;
-        }
-
-        const data = await response.json();
+        await convertImage(uploadedFile, selectedFormat);
 
         conversionSection.style.display = 'none';
         resultSection.style.display = 'block';
-
-        downloadBtn.onclick = () => {
-            window.location.href = `/api/download/${data.download_id}/${data.format}`;
-        };
     } catch (error) {
-        showError('Conversion failed. Please try again.');
+        showError('Conversion failed: ' + error.message);
         convertBtn.disabled = false;
         convertBtn.textContent = 'Convert';
     }
+});
+
+async function convertImage(file, targetFormat) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            img.src = e.target.result;
+        };
+
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+
+            let mimeType = 'image/png';
+            let quality = 0.92;
+
+            if (targetFormat === 'jpg' || targetFormat === 'jpeg') {
+                mimeType = 'image/jpeg';
+            } else if (targetFormat === 'webp') {
+                mimeType = 'image/webp';
+            } else if (targetFormat === 'bmp') {
+                mimeType = 'image/bmp';
+            } else if (targetFormat === 'png') {
+                mimeType = 'image/png';
+            }
+
+            canvas.toBlob((blob) => {
+                if (blob) {
+                    convertedBlob = blob;
+                    resolve();
+                } else {
+                    reject(new Error('Failed to create image blob'));
+                }
+            }, mimeType, quality);
+        };
+
+        img.onerror = () => {
+            reject(new Error('Failed to load image'));
+        };
+
+        reader.readAsDataURL(file);
+    });
+}
+
+downloadBtn.addEventListener('click', () => {
+    if (!convertedBlob) return;
+
+    const url = URL.createObjectURL(convertedBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `converted.${selectedFormat}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 });
 
 function resetUpload() {
     uploadedFile = null;
     validFormats = [];
     selectedFormat = null;
+    convertedBlob = null;
 
     dropZone.style.display = 'block';
     fileInfo.style.display = 'none';
