@@ -19,6 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -55,7 +57,10 @@ def convert_image(input_path: Path, output_path: Path, target_format: str):
     img = Image.open(input_path)
     if img.mode == "RGBA" and target_format.lower() in ["jpg", "jpeg"]:
         img = img.convert("RGB")
-    img.save(output_path, format=target_format.upper())
+    
+    # Pillow uses 'JPEG' not 'JPG'
+    save_format = "JPEG" if target_format.lower() in ["jpg", "jpeg"] else target_format.upper()
+    img.save(output_path, format=save_format)
 
 def convert_audio(input_path: Path, output_path: Path, target_format: str):
     audio = AudioSegment.from_file(input_path)
